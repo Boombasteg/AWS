@@ -1,4 +1,4 @@
-# Welcome to your CDK C# project!
+# Welcome to CDK in C#!
 
 This is a sample project to help you count your Lambda function calls.
 
