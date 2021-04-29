@@ -1,0 +1,417 @@
+# --------------------------------------------------------------------------------------------------
+# CloudFormation for ScienceSoft AWS Traning: VPC, Subnets, EC2 Instance, ALB, ASG
+# Author: Dmitry Gluhotorenko
+#
+# Version      Date           Name                Info
+# 1.0          23-Apr-2021    Dmitry Gluhotorenko       Initial Version
+#
+# --------------------------------------------------------------------------------------------------
+AWSTemplateFormatVersion: 2010-09-09
+Description: "AWS Traning: VPC, Subnets, EC2 Instance, ALB, ASG"
+
+Metadata:
+ AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label:
+          default: "Configuration"
+        Parameters:
+          - Environment
+          - VPCCIDR
+          - PublicSubnetACIDR
+          - PublicSubnetBCIDR
+          - PublicSubnetCCIDR
+          - InstanceType
+          - CIDRAnyAddress
+          - KeyName
+          - AMIID
+
+Parameters:
+  Environment:
+    Type: String
+    Default: "SS-AWS-Traning"
+
+  VPCCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: "CIDR block for VPC"
+
+  PublicSubnetACIDR:
+    Type: String
+    Default: 10.0.10.0/24
+    Description: "CIDR block for A subnet"
+
+  PublicSubnetBCIDR: 
+    Type: String
+    Default: '10.0.20.0/24'
+    Description: "CIDR block for B subnet"
+
+  PublicSubnetCCIDR: 
+    Type: String
+    Default: '10.0.30.0/24'
+    Description: "CIDR block for C subnet"
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+
+  CIDRAnyAddress:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: "Any address in the Internet"
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair
+
+  AMIID:
+    Type: String
+    Default: ami-0ffea00000f287d30
+    AllowedValues:
+      - ami-0ffea00000f287d30
+    Description: Select AMI
+
+Resources:
+#============== VPC ===================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "VPC" ] ]
+
+#========= Internet Gateway ==========
+  GatewayInternet:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "IG" ] ]
+
+  GatewayAttachmentInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref GatewayInternet
+
+#===== RouteTable For Public Subnet =====
+  RouteTableForPublicSubnet:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "RouteTable" ] ]
+
+#============Route RT with IGW===========
+  RoutesForPublicRouteTable:
+    Type: "AWS::EC2::Route"
+    DependsOn: GatewayAttachmentInternet
+    Properties: 
+      DestinationCidrBlock: !Ref CIDRAnyAddress
+      GatewayId: !Ref GatewayInternet
+      RouteTableId: !Ref RouteTableForPublicSubnet
+
+#================ Subnets ================
+  PublicSubnetA:
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, "Fn::GetAZs": { Ref: "AWS::Region" } ]
+      CidrBlock: !Ref "PublicSubnetACIDR"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "PublicSubnetA" ] ]
+
+  PublicSubnetB:
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, "Fn::GetAZs": { Ref: "AWS::Region" } ]
+      CidrBlock: !Ref "PublicSubnetBCIDR"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "PublicSubnetB" ] ]
+
+  PublicSubnetC:
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, "Fn::GetAZs": { Ref: "AWS::Region" } ]
+      CidrBlock: !Ref "PublicSubnetCCIDR"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "PublicSubnetC" ] ]
+
+#====== Associate RT with subnets=======
+  RouteAssociationPublicA:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnetA
+
+  RouteAssociationPublicB:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnetB
+
+  RouteAssociationPublicC:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnetC
+
+#============ SecurityGroup ============
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Inbound rules enable SSH and HTTP 
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref CIDRAnyAddress
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref CIDRAnyAddress
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "SecurityGroup" ] ]
+
+#================ EC2 ==================
+  MainEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+      - !Ref SecurityGroup
+      SubnetId: !Ref PublicSubnetA
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIID
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y git python-pip
+          git clone https://github.com/cloudacademy/lab-utils.git
+          cd lab-utils/apps/puppies/main
+          sudo pip install -r requirements.txt
+          sudo python cyclone.py
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "MainEC2Instance" ] ]
+
+#======== LaunchConfigurations ==========
+  CatsLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: !Join [ "-", [ !Ref Environment, "CatsLaunchConfig" ] ]
+      ImageId: !Ref AMIID
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref SecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y git python-pip
+          git clone https://github.com/cloudacademy/lab-utils.git
+          cd lab-utils/apps/puppies/cats
+          pip install -r requirements.txt
+          sudo python cyclone.py
+
+  DogsLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: !Join [ "-", [ !Ref Environment, "DogsLaunchConfig" ] ]
+      ImageId: !Ref AMIID
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref SecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y git python-pip
+          git clone https://github.com/cloudacademy/lab-utils.git
+          cd lab-utils/apps/puppies/dogs
+          pip install -r requirements.txt
+          sudo python cyclone.py
+
+#============ TargetGroups ==============
+  MainTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPort: 80
+      Targets:
+      - Id: !Ref MainEC2Instance
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "MainTargetGroup" ] ]
+
+  CatsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPort: 80
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "CatsTargetGroup" ] ]
+
+  DogsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPort: 80
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "DogsTargetGroup" ] ]
+
+#========= AutoScalingGroups ============
+  CatsASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Join [ "-", [ !Ref Environment, "CatsASG" ] ]
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+        - !Ref PublicSubnetC
+      TargetGroupARNs:
+        - !Ref CatsTargetGroup
+      LaunchConfigurationName: !Ref CatsLaunchConfig
+      DesiredCapacity: 1
+      MaxSize: 1
+      MinSize: 1
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "CatsASG" ] ]
+          PropagateAtLaunch: True
+
+  CatsScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref CatsASG
+      Cooldown: '60'
+      ScalingAdjustment: 1
+
+  CatsScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref CatsASG
+      Cooldown: '300'
+      ScalingAdjustment: -1
+
+  DogsASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Join [ "-", [ !Ref Environment, "DogsASG" ] ]
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+        - !Ref PublicSubnetC
+      TargetGroupARNs:
+        - !Ref DogsTargetGroup
+      LaunchConfigurationName: !Ref DogsLaunchConfig
+      DesiredCapacity: 1
+      MaxSize: 1
+      MinSize: 1
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "DogsASG" ] ]
+          PropagateAtLaunch: True
+
+  DogsScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref DogsASG
+      Cooldown: '60'
+      ScalingAdjustment: 1
+
+  DogsScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref DogsASG
+      Cooldown: '300'
+      ScalingAdjustment: -1
+
+#================ ELB ==================
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      Name: !Join [ "-", [ !Ref Environment, "ELB" ] ]
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+        - !Ref PublicSubnetC
+      SecurityGroups:
+        - !Ref SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Join [ "-", [ !Ref Environment, "LoadBalancer" ] ]
+
+#============== Listener ===============
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MainTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+#============ ListenerRules ============
+  CatsListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values: ["/cats"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref CatsTargetGroup
+      ListenerArn: !Ref Listener
+      Priority: 1
+
+  DogsListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values: ["/dogs"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DogsTargetGroup
+      ListenerArn: !Ref Listener
+      Priority: 2
